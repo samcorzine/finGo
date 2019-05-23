@@ -88,7 +88,7 @@ func groupByTicker(data []tickerDatum) [][]tickerDatum {
 }
 
 func groupChanByTicker(tickerDatumChan chan tickerDatum) chan []tickerDatum {
-  var outChan chan []tickerDatum
+  outChan := make(chan []tickerDatum, 0)
   var currentSymbol string = ""
   var currentList []tickerDatum
   go func() {
@@ -96,9 +96,14 @@ func groupChanByTicker(tickerDatumChan chan tickerDatum) chan []tickerDatum {
       if datum.symbol == currentSymbol {
         currentList = append(currentList, datum)
       } else {
-        outChan <- currentList
-        currentSymbol = datum.symbol
-        currentList = make([]tickerDatum, 0)
+        if currentSymbol == "" {
+          currentSymbol = datum.symbol
+          currentList = append(currentList, datum)
+        } else {
+          outChan <- currentList
+          currentSymbol = datum.symbol
+          currentList = make([]tickerDatum, 0)
+        }
       }
     }
   }()
@@ -106,7 +111,7 @@ func groupChanByTicker(tickerDatumChan chan tickerDatum) chan []tickerDatum {
 }
 
 func regress(dataIn <-chan []tickerDatum, xMapper, yMapper mapper) (<-chan regResult) {
-  out := make(chan regResult)
+  out := make(chan regResult, 0)
   go func() {
     for data := range dataIn {
       var xList []float64
@@ -120,9 +125,12 @@ func regress(dataIn <-chan []tickerDatum, xMapper, yMapper mapper) (<-chan regRe
       origin := false
 
       alpha, beta := stat.LinearRegression(xList, yList, nil, origin)
+      // fmt.Println(alpha)
       // stat.RSquared(days, opens, nil, alpha, betma)
-      result := regResult{symbol: data[0].symbol, alpha: alpha, beta: beta}
-      out <- result
+      if len(data) > 0 {
+        result := regResult{symbol: data[0].symbol, alpha: alpha, beta: beta}
+        out <- result
+      }
     }
   }()
   return out
@@ -181,20 +189,22 @@ func fileReader(fileName string) chan []string {
   f, _ := os.Open(fileName)
   finData := csv.NewReader(f)
   finData.Read()
-  var lineChan chan []string
+  lineChan := make(chan []string, 0)
   go func() {
-    res, _ := finData.Read()
-    fmt.Println(res)
-    lineChan <- res
+    for {
+      res, _ := finData.Read()
+      // fmt.Println(res)
+      lineChan <- res
+    }
   }()
   return lineChan
 }
 
 func makeTickerDatum(lines chan []string) chan tickerDatum {
-  var datumChan chan tickerDatum
+  datumChan := make(chan tickerDatum, 0)
   go func() {
     for ln := range lines {
-      fmt.Println(ln)
+      // fmt.Println(ln)
       splitDate := strings.Split(ln[0], "-")
       yearNum, _ := strconv.Atoi(splitDate[0])
       monthNum, _ := strconv.Atoi(splitDate[1])
@@ -216,7 +226,7 @@ func makeTickerDatum(lines chan []string) chan tickerDatum {
         low:       float32(low),
         adjclose:  float32(adjClose),
       }
-      fmt.Println(datum)
+      // fmt.Println(datum)
       datumChan <- datum
     }
   }()
@@ -230,6 +240,7 @@ func newMain() {
   tickerGroupChan := groupChanByTicker(tickerDatumChan)
   regResultChan := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
   for res := range regResultChan {
+    // fmt.Println(res)
     fmt.Println(res.symbol)
     fmt.Println(res.alpha)
     fmt.Println(res.beta)
