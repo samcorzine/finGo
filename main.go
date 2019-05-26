@@ -10,6 +10,7 @@ import (
   "strings"
   "log"
   "sync"
+  "io"
 )
 
 type mapper func(tickerDatum) float32
@@ -106,6 +107,7 @@ func groupChanByTicker(tickerDatumChan chan tickerDatum) chan []tickerDatum {
         }
       }
     }
+    close(outChan)
   }()
   return outChan
 }
@@ -125,13 +127,13 @@ func regress(dataIn <-chan []tickerDatum, xMapper, yMapper mapper) (<-chan regRe
       origin := false
 
       alpha, beta := stat.LinearRegression(xList, yList, nil, origin)
-      // fmt.Println(alpha)
       // stat.RSquared(days, opens, nil, alpha, betma)
       if len(data) > 0 {
         result := regResult{symbol: data[0].symbol, alpha: alpha, beta: beta}
         out <- result
       }
     }
+    close(out)
   }()
   return out
 }
@@ -160,31 +162,6 @@ func merge(cs ...<-chan regResult) <-chan regResult {
     return out
 }
 
-// func oldMain() {
-//   start := time.Now()
-//   f, _ := os.Open("amex-nyse-nasdaq-stock-histories/history_60d.csv")
-//   finData := csv.NewReader(f)
-//   finData.Read()
-//   everything, _ := finData.ReadAll()
-//   var tickerData []tickerDatum
-//   for _, x := range everything {
-//     tickerData = append(tickerData, fromCSV(x))
-//   }
-//   byCompany := groupByTicker(tickerData)
-//   for _, compData := range byCompany {
-//     go func() {
-//       alpha, beta := regress(compData, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
-//       if len(compData) > 0 {
-//         fmt.Println(compData[0].symbol)
-//       }
-//       fmt.Println(alpha)
-//       fmt.Println(beta)
-//     }()
-//   }
-//   elapsed := time.Since(start)
-//   log.Printf("Calculation took %s", elapsed)
-// }
-
 func fileReader(fileName string) chan []string {
   f, _ := os.Open(fileName)
   finData := csv.NewReader(f)
@@ -192,8 +169,14 @@ func fileReader(fileName string) chan []string {
   lineChan := make(chan []string, 0)
   go func() {
     for {
-      res, _ := finData.Read()
-      // fmt.Println(res)
+      res, err := finData.Read()
+      if err == io.EOF {
+        close(lineChan)
+        break
+      }
+      if err != nil {
+        log.Fatal(err)
+      }
       lineChan <- res
     }
   }()
@@ -204,7 +187,6 @@ func makeTickerDatum(lines chan []string) chan tickerDatum {
   datumChan := make(chan tickerDatum, 0)
   go func() {
     for ln := range lines {
-      // fmt.Println(ln)
       splitDate := strings.Split(ln[0], "-")
       yearNum, _ := strconv.Atoi(splitDate[0])
       monthNum, _ := strconv.Atoi(splitDate[1])
@@ -226,9 +208,9 @@ func makeTickerDatum(lines chan []string) chan tickerDatum {
         low:       float32(low),
         adjclose:  float32(adjClose),
       }
-      // fmt.Println(datum)
       datumChan <- datum
     }
+    close(datumChan)
   }()
   return datumChan
 }
@@ -239,11 +221,15 @@ func newMain() {
   tickerDatumChan := makeTickerDatum(lineChan)
   tickerGroupChan := groupChanByTicker(tickerDatumChan)
   regResultChan := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
-  for res := range regResultChan {
-    // fmt.Println(res)
-    fmt.Println(res.symbol)
+  regResultChan2 := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
+  regResultChan3 := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
+  regResultChan4 := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
+  regResultChan5 := regress(tickerGroupChan, func(t tickerDatum) float32 { return float32(t.date.Day())}, func(t tickerDatum) float32 { return t.open})
+  finalResultChan := merge(regResultChan, regResultChan2, regResultChan3, regResultChan4, regResultChan5)
+  for res := range finalResultChan {
+    // fmt.Println(res.symbol)
     fmt.Println(res.alpha)
-    fmt.Println(res.beta)
+    // fmt.Println(res.beta)
   }
   elapsed := time.Since(start)
   log.Printf("Calculation took %s", elapsed)
